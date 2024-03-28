@@ -1,0 +1,278 @@
+---
+title: "Ice Caps"
+author: "Josiah Chung"
+date: "2023-04-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(zoo)
+library(ggplot2)
+library(tseries)
+library(forecast)
+library(fpp)
+library(vars)
+library(TSA)
+```
+
+## Combining and Preparing Data: North
+```{r}
+
+icecaps_N <- data.frame()
+
+# Loop through the 12 CSV files
+for (i in 1:12) {
+  if (i < 10){
+    df <- read.csv(paste0("N_0", i, "_extent_v3.0.csv"))
+  }
+  if (i >= 10){
+    df <- read.csv(paste0("N_", i, "_extent_v3.0.csv"))
+  }
+  icecaps_N <- rbind(icecaps_N, df)
+}
+
+# Combine the year and month columns into a new "date" column and convert to a year-month format
+icecaps_N <- icecaps_N %>%
+  mutate(date = ym(paste(year, str_pad(mo, 2, pad = "0"), sep = "-"))) %>%
+  mutate(date = as.yearmon(date)) %>%
+  dplyr::select(date, extent, area) %>% # Select only the date and extent columns
+  arrange(date) %>% # Sort by the date column
+  mutate(extent = replace(extent, extent == -9999.00, NA), # Replace -9999.00 with NA in the extent column
+         area = replace(area, area == -9999.00, NA)) # Replace -9999.00 with NA in the area column
+
+head(icecaps_N)
+```
+
+## Combining and Preparing Data: South
+```{r}
+icecaps_S <- data.frame()
+
+# Loop through the 12 CSV files
+for (i in 1:12) {
+  if (i < 10){
+    df <- read.csv(paste0("S_0", i, "_extent_v3.0.csv"))
+  }
+  if (i >= 10){
+    df <- read.csv(paste0("S_", i, "_extent_v3.0.csv"))
+  }
+  icecaps_S <- rbind(icecaps_S, df)
+}
+
+# Combine the year and month columns into a new "date" column and convert to a year-month format
+icecaps_S <- icecaps_S %>%
+  mutate(date = ym(paste(year, str_pad(mo, 2, pad = "0"), sep = "-"))) %>%
+  mutate(date = as.yearmon(date)) %>%
+  dplyr::select(date, extent, area) %>% # Select only the date and extent columns
+  arrange(date) %>% # Sort by the date column
+  mutate(extent = replace(extent, extent == -9999.00, NA), # Replace -9999.00 with NA in the extent column
+         area = replace(area, area == -9999.00, NA)) # Replace -9999.00 with NA in the area column
+
+
+head(icecaps_S)
+```
+
+## Handling Missing Data for North and South
+```{r}
+
+# Function that imputates missing data by replacing missing values with the average of all values of the same month
+
+fill_missing <- function(df) {
+  for (i in 1:nrow(df)){
+    if (is.na(df[i, "extent"])){ # if there is a missing value in extent column
+      my_sum <- 0
+      month_count <- 0
+      df_month <- month(df[i,"date"]) # store the month of missing value
+      for (j in 1:nrow(df)){ 
+          if (i != j){
+            # take the average of extents of all same months
+            if (month(df[j,"date"]) == df_month){ 
+              my_sum <- my_sum + (df[j,"extent"])
+              month_count <- month_count + 1
+            }
+          }
+      }
+      # replace missing value with calculated average
+      df[i, "extent"] <- (my_sum/month_count)
+    }
+    
+    if (is.na(df[i, "area"])){ # if there is a missing value in area column
+      my_sum <- 0
+      month_count <- 0
+      df_month <- month(df[i,"date"]) # store the month of missing value
+      for (j in 1:nrow(df)){ 
+          if (i != j){
+            # take the average of areas of all same months
+            if (month(df[j,"date"]) == df_month){ 
+              my_sum <- my_sum + (df[j,"area"])
+              month_count <- month_count + 1
+            }
+          }
+      }
+      # replace missing value with calculated average
+      df[i, "area"] <- (my_sum/month_count)
+    }
+  }
+  df
+  }
+
+```
+
+
+```{r}
+icecaps_N <- fill_missing(icecaps_N)
+icecaps_S <- fill_missing(icecaps_S)
+```
+
+## Plotting the Data
+
+```{r}
+ts_extent_N <- ts(icecaps_N$extent, start=c(1979,1), frequency=12)
+ts_area_N <- ts(icecaps_N$area, start=c(1979,1), frequency=12)
+
+
+autoplot(ts_extent_N, xlab = "Year", ylab = "Extent", main = "Original Time Series Extent (North)")
+autoplot(ts_area_N, xlab = "Year", ylab = "Area", main = "Original Time Series Area (North)")
+```
+
+```{r}
+ts_extent_S <- ts(icecaps_S$extent, start=c(1979,1), frequency=12)
+ts_area_S <- ts(icecaps_S$area, start=c(1979,1), frequency=12)
+
+autoplot(ts_extent_S, xlab = "Year", ylab = "Extent", main = "Original Time Series Extent (South)")
+autoplot(ts_area_S, xlab = "Year", ylab = "Area", main = "Original Time Series Area (South)")
+```
+
+
+## Getting train and test data
+```{r}
+train_extent_N <- window(ts_extent_N, start = c(1990, 1), end = c(2019, 12))
+test_extent_N <- window(ts_extent_N, start = c(2020, 1))
+
+```
+
+```{r}
+train_area_N <- window(ts_area_N, start = c(1990, 1), end = c(2019, 12))
+test_area_N <- window(ts_area_N, start = c(2020, 1))
+```
+
+```{r}
+#exponential smoothning
+fit_add <- decompose(train_extent_N, type="additive")
+plot(fit_add)
+
+fit_mult <- decompose(train_extent_N, type="multiplicative")
+plot(fit_mult)
+
+
+fit_add <- decompose(train_area_N, type="additive")
+plot(fit_add)
+
+fit_mult <- decompose(train_area_N, type="multiplicative")
+plot(fit_mult)
+
+```
+
+```{r}
+#holt winters additive
+fit_hw_add <- hw(train_extent_N, h=length(test_extent_N), seasonal="add")
+summary(fit_hw_add)
+
+
+autoplot(fit_hw_add) +
+  autolayer(test_extent_N, series = "Actual") +
+  xlab("Time") +
+  ylab("Extent") +
+  ggtitle("Holt-Winters Forecast and Actual Values") +
+  guides(color = guide_legend(title = "Series"))
+# Red- Actual 
+# blue line predicted
+# blue shade confidence interval
+```
+
+
+```{r}
+#holt winters additive damping
+fit_hw_add_damp <- hw(train_extent_N, h=length(test_extent_N), seasonal="add",
+           damped=TRUE)
+summary(fit_hw_add_damp)
+
+autoplot(fit_hw_add_damp) +
+  autolayer(test_extent_N, series = "Actual") +
+  xlab("Time") +
+  ylab("Extent") +
+  ggtitle("Holt-Winters Forecast and Actual Values") +
+  guides(color = guide_legend(title = "Series"))
+```
+
+```{r}
+# Comparing RMSE Train
+print(accuracy(fit_hw_add)[2])
+
+print(accuracy(fit_hw_add_damp)[2])
+```
+
+```{r}
+#
+checkresiduals(fit_hw_add_damp)
+```
+
+```{r}
+cat("Holt-Winters Additive with Damping\n")
+accuracy_hw_add_damp <- accuracy(fit_hw_add_damp, test_extent_N)
+accuracy_hw_add_damp
+
+cat("\nHolt-Winters Additive\n")
+accuracy(fit_hw_add, test_extent_N)
+```
+
+
+
+
+### Auto Arima
+```{r}
+arima_model <- auto.arima(train_extent_N, seasonal=TRUE) 
+
+arima_model
+summary(arima_model)
+```
+
+```{r}
+checkresiduals(arima_model$residuals)
+```
+
+
+
+```{r}
+arima_forecast <- forecast(arima_model, h = length(test_extent_N))
+
+autoplot(arima_forecast) +
+  autolayer(test_extent_N, series = "Actual") +
+  xlab("Time") +
+  ylab("Extent") +
+  ggtitle("Forecast and Actual Values") +
+  guides(color = guide_legend(title = "Series"))
+
+
+```
+
+```{r}
+plot(arima_forecast$mean,  xlab = "Months", ylab = "Extent", col = "red", ylim=c(0,20))
+lines(test_extent_N, col = "blue")
+legend("bottomleft", legend = c("Extent Forecast", "Original Time Series"), col = c("red", "blue"), lty = c(1,1))
+```
+
+
+```{r}
+cat("Auto ARIMA\n")
+accuracy(arima_forecast, test_extent_N)
+```
+
+
+
